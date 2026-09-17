@@ -3,29 +3,65 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from bot.fetchers.anilist import AniListFetcher
 from bot.fetchers.filler_list import FillerFetcher
+from bot.db.users_repo import UsersRepo
 from bot.utils.formatting import format_anime_card, escape_html, clean_synopsis
 
 def _title(item: dict) -> str:
     return item.get("title", {}).get("english") or item.get("title", {}).get("romaji") or "Unknown"
 
 def _cover(item: dict) -> str:
-    return item.get("coverImage", {}).get("large") or ""
+    return item.get("coverImage", {}).get("extraLarge") or item.get("coverImage", {}).get("large") or ""
 
-def _build_anime_buttons(anime_id: int, query: str = "", page: int = 1, has_next: bool = False) -> list:
-    buttons = [
-        [
-            InlineKeyboardButton("[+] Watchlist", callback_data=f"wl_add:{anime_id}"),
-            InlineKeyboardButton("★ Favorite", callback_data=f"fav_add:{anime_id}")
-        ]
-    ]
+def _format_year_type(item: dict) -> str:
+    year = item.get("startDate", {}).get("year") if isinstance(item.get("startDate"), dict) else None
+    fmt = item.get("format") or ""
+    meta = []
+    if year: meta.append(str(year))
+    if fmt: meta.append(fmt)
+    return f" ({' · '.join(meta)})" if meta else ""
+
+def _build_search_results_markup(media_list: list, query: str, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    buttons = []
+    for idx, item in enumerate(media_list, start=1):
+        title_str = _title(item)
+        meta_str = _format_year_type(item)
+        display_label = f"{idx}. {title_str}{meta_str}"
+        if len(display_label) > 42:
+            display_label = display_label[:39] + "..."
+        buttons.append([InlineKeyboardButton(display_label, callback_data=f"anime_sel:{item['id']}:{query[:20]}:{page}")])
+
     nav = []
     if page > 1:
-        nav.append(InlineKeyboardButton("‹ Prev", callback_data=f"anime_page:{query}:{page-1}"))
+        nav.append(InlineKeyboardButton("‹ Prev", callback_data=f"anime_page:{query[:20]}:{page-1}"))
     if has_next:
-        nav.append(InlineKeyboardButton("Next ›", callback_data=f"anime_page:{query}:{page+1}"))
+        nav.append(InlineKeyboardButton("Next ›", callback_data=f"anime_page:{query[:20]}:{page+1}"))
     if nav:
         buttons.append(nav)
-    return buttons
+
+    return InlineKeyboardMarkup(buttons)
+
+def _build_detail_card_markup(anime_id: int, query: str = "", page: int = 1) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton("+1 Ep", callback_data=f"tr_d:{anime_id}:1:{query[:20]}:{page}"),
+            InlineKeyboardButton("+3 Ep", callback_data=f"tr_d:{anime_id}:3:{query[:20]}:{page}"),
+            InlineKeyboardButton("+10 Ep", callback_data=f"tr_d:{anime_id}:10:{query[:20]}:{page}")
+        ],
+        [
+            InlineKeyboardButton("-1 Ep", callback_data=f"tr_d:{anime_id}:-1:{query[:20]}:{page}"),
+            InlineKeyboardButton("-3 Ep", callback_data=f"tr_d:{anime_id}:-3:{query[:20]}:{page}"),
+            InlineKeyboardButton("-10 Ep", callback_data=f"tr_d:{anime_id}:-10:{query[:20]}:{page}")
+        ],
+        [
+            InlineKeyboardButton("[+] Watchlist", callback_data=f"wl_add:{anime_id}"),
+            InlineKeyboardButton("★ Favorite", callback_data=f"fav_add:{anime_id}"),
+            InlineKeyboardButton("✓ Watched", callback_data=f"wl_watched:{anime_id}")
+        ]
+    ]
+    if query:
+        buttons.append([InlineKeyboardButton("‹ Back to Results", callback_data=f"anime_page:{query[:20]}:{page}")])
+
+    return InlineKeyboardMarkup(buttons)
 
 def register_info_handlers(app: Client):
 
@@ -36,51 +72,72 @@ def register_info_handlers(app: Client):
             await message.reply_text("• Usage: <code>/anime &lt;title&gt;</code>\n• Example: <code>/anime Death Note</code>")
             return
         query = " ".join(message.command[1:])
-        msg = await message.reply_text("› Searching...")
+        msg = await message.reply_text("› Searching titles...")
         data = await AniListFetcher.search_anime(query, page=1, per_page=5)
         media_list = data.get("media", [])
+        page_info = data.get("pageInfo", {})
         if not media_list:
-            await msg.edit_text("[-] No anime found matching that query. Please verify the title spelling.")
+            await msg.edit_text("[-] No anime found matching that query. Please check title spelling.")
             return
 
-        item = media_list[0]
-        text = format_anime_card(_title(item), item.get("status"), item.get("averageScore"), item.get("description"), item.get("siteUrl"))
-        has_next = len(media_list) > 1
-        markup = InlineKeyboardMarkup(_build_anime_buttons(item["id"], query, 1, has_next))
-        cover = _cover(item)
-        await msg.delete()
-        if cover:
-            await message.reply_photo(photo=cover, caption=text, reply_markup=markup)
-        else:
-            await message.reply_text(text, reply_markup=markup)
+        has_next = page_info.get("hasNextPage", False) or len(media_list) >= 5
+        text = f"<b>Search Results for:</b> <i>\"{escape_html(query)}\"</i> (Page 1)\nSelect a title to view details:"
+        markup = _build_search_results_markup(media_list, query, 1, has_next)
+        await msg.edit_text(text, reply_markup=markup)
 
-    # Pagination callback for /anime
-    @app.on_callback_query(filters.regex(r"^anime_page:(.+):(\d+)$"))
+    # Search result selection callback
+    @app.on_callback_query(filters.regex(r"^anime_sel:(\d+):(.*):(\d+)$"))
+    async def anime_select_cb(client: Client, cb: CallbackQuery):
+        match = cb.data.split(":", 3)
+        anime_id = int(match[1])
+        query = match[2]
+        page = int(match[3])
+
+        item = await AniListFetcher.get_by_id(anime_id)
+        if not item:
+            await cb.answer("Could not load details.", show_alert=True)
+            return
+
+        text = format_anime_card(_title(item), item.get("status"), item.get("averageScore"), item.get("description"), item.get("siteUrl"))
+        markup = _build_detail_card_markup(anime_id, query, page)
+        cover = _cover(item)
+
+        await cb.answer()
+        if cover:
+            try:
+                await cb.message.delete()
+                await cb.message.reply_photo(photo=cover, caption=text, reply_markup=markup)
+            except Exception:
+                await cb.message.edit_text(text, reply_markup=markup)
+        else:
+            await cb.message.edit_text(text, reply_markup=markup)
+
+    # Pagination callback for /anime search results
+    @app.on_callback_query(filters.regex(r"^anime_page:(.*):(\d+)$"))
     async def anime_page_cb(client: Client, cb: CallbackQuery):
         match = cb.data.split(":", 2)
         query = match[1]
         page = int(match[2])
+        if page < 1: page = 1
+
         data = await AniListFetcher.search_anime(query, page=page, per_page=5)
         media_list = data.get("media", [])
         page_info = data.get("pageInfo", {})
         if not media_list:
             await cb.answer("No additional results available.", show_alert=False)
             return
-        item = media_list[0]
-        text = format_anime_card(_title(item), item.get("status"), item.get("averageScore"), item.get("description"), item.get("siteUrl"))
-        has_next = page_info.get("hasNextPage", False) or len(media_list) > 1
-        markup = InlineKeyboardMarkup(_build_anime_buttons(item["id"], query, page, has_next))
-        cover = _cover(item)
-        try:
-            if cover:
-                await cb.message.edit_media(
-                    media={"_": "InputMediaPhoto", "media": cover, "caption": text, "parse_mode": "html"},
-                    reply_markup=markup
-                )
-            else:
-                await cb.message.edit_text(text, reply_markup=markup)
-        except Exception:
-            await cb.answer("Updated.", show_alert=False)
+
+        has_next = page_info.get("hasNextPage", False) or len(media_list) >= 5
+        text = f"<b>Search Results for:</b> <i>\"{escape_html(query)}\"</i> (Page {page})\nSelect a title to view details:"
+        markup = _build_search_results_markup(media_list, query, page, has_next)
+
+        await cb.answer()
+        # If previous message was a photo message, delete and reply text
+        if cb.message.photo:
+            await cb.message.delete()
+            await cb.message.reply_text(text, reply_markup=markup)
+        else:
+            await cb.message.edit_text(text, reply_markup=markup)
 
     # ── /manga ──────────────────────────────────────
     @app.on_message(filters.command("manga"))
@@ -92,17 +149,15 @@ def register_info_handlers(app: Client):
         msg = await message.reply_text("› Searching manga...")
         data = await AniListFetcher.search_manga(query, page=1, per_page=5)
         media_list = data.get("media", [])
+        page_info = data.get("pageInfo", {})
         if not media_list:
             await msg.edit_text("[-] No manga found matching that title.")
             return
-        item = media_list[0]
-        text = format_anime_card(_title(item), item.get("status"), item.get("averageScore"), item.get("description"), item.get("siteUrl"))
-        cover = _cover(item)
-        await msg.delete()
-        if cover:
-            await message.reply_photo(photo=cover, caption=text)
-        else:
-            await message.reply_text(text)
+
+        has_next = page_info.get("hasNextPage", False) or len(media_list) >= 5
+        text = f"<b>Manga Search Results for:</b> <i>\"{escape_html(query)}\"</i> (Page 1)\nSelect a title to view details:"
+        markup = _build_search_results_markup(media_list, query, 1, has_next)
+        await msg.edit_text(text, reply_markup=markup)
 
     # ── /character ──────────────────────────────────
     @app.on_message(filters.command("character"))
@@ -200,3 +255,4 @@ def register_info_handlers(app: Client):
         text += f'\n› <a href="{escape_html(info["source_url"])}">Source: AnimeFillerList</a>'
 
         await msg.edit_text(text)
+

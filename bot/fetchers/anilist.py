@@ -16,6 +16,7 @@ query ($search: String, $page: Int, $perPage: Int, $isAdult: Boolean) {
     pageInfo { total currentPage lastPage hasNextPage }
     media(search: $search, type: ANIME, isAdult: $isAdult, sort: SEARCH_MATCH) {
       id
+      format startDate { year }
       title { romaji english native }
       status averageScore episodes
       description(asHtml: false)
@@ -27,13 +28,14 @@ query ($search: String, $page: Int, $perPage: Int, $isAdult: Boolean) {
 }
 """
 
-# Browse WITHOUT a keyword — sorted by popularity, no search filter
+# Browse WITHOUT a keyword — sorted by popularity/date/trending, with optional genre
 ANIME_BROWSE_QUERY = """
-query ($page: Int, $perPage: Int, $isAdult: Boolean, $sort: [MediaSort]) {
+query ($page: Int, $perPage: Int, $isAdult: Boolean, $sort: [MediaSort], $genre: String) {
   Page(page: $page, perPage: $perPage) {
     pageInfo { total currentPage lastPage hasNextPage }
-    media(type: ANIME, isAdult: $isAdult, sort: $sort) {
+    media(type: ANIME, isAdult: $isAdult, sort: $sort, genre: $genre) {
       id
+      format startDate { year }
       title { romaji english native }
       status averageScore episodes
       description(asHtml: false)
@@ -51,6 +53,7 @@ query ($search: String, $page: Int, $perPage: Int, $isAdult: Boolean) {
     pageInfo { total currentPage lastPage hasNextPage }
     media(search: $search, type: MANGA, isAdult: $isAdult) {
       id
+      format startDate { year }
       title { romaji english }
       status averageScore chapters volumes
       description(asHtml: false)
@@ -86,10 +89,11 @@ query ($search: String, $page: Int, $perPage: Int) {
 """
 
 TRENDING_QUERY = """
-query ($page: Int, $perPage: Int, $isAdult: Boolean) {
+query ($page: Int, $perPage: Int, $isAdult: Boolean, $genre: String) {
   Page(page: $page, perPage: $perPage) {
-    media(type: ANIME, sort: TRENDING_DESC, isAdult: $isAdult) {
+    media(type: ANIME, sort: TRENDING_DESC, isAdult: $isAdult, genre: $genre) {
       id
+      format startDate { year }
       title { romaji english }
       status averageScore episodes
       description(asHtml: false)
@@ -119,6 +123,7 @@ ANIME_BY_ID_QUERY = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
     id
+    format startDate { year }
     title { romaji english native }
     status averageScore episodes
     description(asHtml: false)
@@ -172,20 +177,23 @@ async def _post(query: str, variables: Dict[str, Any], retries: int = 3) -> Dict
 class AniListFetcher:
 
     @classmethod
-    async def search_anime(cls, search: str, page: int = 1, per_page: int = 20, is_adult: bool = False) -> Dict[str, Any]:
-        """Search anime by keyword. Falls back to trending browse if query is empty."""
+    async def search_anime(cls, search: str, page: int = 1, per_page: int = 20, is_adult: bool = False, genre: Optional[str] = None) -> Dict[str, Any]:
+        """Search anime by keyword. Falls back to browse if query is empty."""
         if not search or not search.strip():
-            # No keyword — return popular results instead of failing
-            return await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["POPULARITY_DESC"])
-        res = await _post(ANIME_SEARCH_QUERY, {"search": search.strip(), "page": page, "perPage": per_page, "isAdult": is_adult})
+            return await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["POPULARITY_DESC"], genre=genre)
+        variables: Dict[str, Any] = {"search": search.strip(), "page": page, "perPage": per_page, "isAdult": is_adult}
+        res = await _post(ANIME_SEARCH_QUERY, variables)
         return res.get("data", {}).get("Page", {})
 
     @classmethod
-    async def _browse_anime(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, sort: List[str] = None) -> Dict[str, Any]:
-        """Browse anime without keyword, sorted by given criteria."""
+    async def _browse_anime(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, sort: List[str] = None, genre: Optional[str] = None) -> Dict[str, Any]:
+        """Browse anime without keyword, sorted by given criteria and optional genre."""
         if sort is None:
             sort = ["POPULARITY_DESC"]
-        res = await _post(ANIME_BROWSE_QUERY, {"page": page, "perPage": per_page, "isAdult": is_adult, "sort": sort})
+        variables: Dict[str, Any] = {"page": page, "perPage": per_page, "isAdult": is_adult, "sort": sort}
+        if genre and genre.strip():
+            variables["genre"] = genre.strip()
+        res = await _post(ANIME_BROWSE_QUERY, variables)
         return res.get("data", {}).get("Page", {})
 
     @classmethod
@@ -210,18 +218,21 @@ class AniListFetcher:
         return res.get("data", {}).get("Page", {})
 
     @classmethod
-    async def get_trending(cls, page: int = 1, per_page: int = 10, is_adult: bool = False) -> List[Dict[str, Any]]:
-        res = await _post(TRENDING_QUERY, {"page": page, "perPage": per_page, "isAdult": is_adult})
+    async def get_trending(cls, page: int = 1, per_page: int = 10, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
+        variables: Dict[str, Any] = {"page": page, "perPage": per_page, "isAdult": is_adult}
+        if genre and genre.strip():
+            variables["genre"] = genre.strip()
+        res = await _post(TRENDING_QUERY, variables)
         return res.get("data", {}).get("Page", {}).get("media", [])
 
     @classmethod
-    async def get_popular(cls, page: int = 1, per_page: int = 30, is_adult: bool = False) -> List[Dict[str, Any]]:
-        page_data = await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["POPULARITY_DESC"])
+    async def get_popular(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
+        page_data = await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["POPULARITY_DESC"], genre=genre)
         return page_data.get("media", [])
 
     @classmethod
-    async def get_new_releases(cls, page: int = 1, per_page: int = 30, is_adult: bool = False) -> List[Dict[str, Any]]:
-        page_data = await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["START_DATE_DESC"])
+    async def get_new_releases(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
+        page_data = await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["START_DATE_DESC"], genre=genre)
         return page_data.get("media", [])
 
     @classmethod
@@ -233,3 +244,4 @@ class AniListFetcher:
     async def get_by_id(cls, anime_id: int) -> Dict[str, Any]:
         res = await _post(ANIME_BY_ID_QUERY, {"id": anime_id})
         return res.get("data", {}).get("Media", {})
+

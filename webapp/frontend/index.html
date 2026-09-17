@@ -13,7 +13,7 @@
   <div id="top-loader" class="top-loader"></div>
 
   <div id="app">
-    <!-- SCREEN 1: DISCOVER -->
+    <!-- SCREEN 1: DISCOVER & MAIN CATALOG -->
     <section id="screen-home" class="screen active">
       <header class="app-header">
         <div class="brand">
@@ -39,7 +39,7 @@
         <div id="search-results" class="grid-layout"></div>
       </div>
 
-      <!-- Default Home Sections -->
+      <!-- Main Home Content with Integrated Catalog & Genre Options -->
       <div id="home-content">
         <div class="section-header">
           <span class="section-title">Trending Titles</span>
@@ -51,34 +51,62 @@
           <div class="skeleton-card"></div>
         </div>
 
-        <div class="section-header">
-          <span class="section-title">Your Watchlist</span>
-          <span id="watchlist-count" class="section-meta"></span>
+        <div class="section-header" style="margin-top: 18px;">
+          <span class="section-title">Browse Catalog</span>
+          <span class="section-meta" id="catalog-meta">All Titles</span>
         </div>
-        <div id="watchlist-home" class="grid-layout">
-          <p class="status-msg">No titles added yet. Search or browse to add.</p>
+
+        <!-- Integrated Catalog Filter Bar + Genre Pills -->
+        <div class="filter-container">
+          <div id="filter-strip" class="filter-strip">
+            <button class="filter-chip active" data-filter="all">All</button>
+            <button class="filter-chip" data-filter="trending">Trending</button>
+            <button class="filter-chip" data-filter="new">New Releases</button>
+            <button class="filter-chip" data-filter="popular">Popular</button>
+            <button class="filter-chip" data-filter="Action">Action</button>
+            <button class="filter-chip" data-filter="Adventure">Adventure</button>
+            <button class="filter-chip" data-filter="Comedy">Comedy</button>
+            <button class="filter-chip" data-filter="Drama">Drama</button>
+            <button class="filter-chip" data-filter="Fantasy">Fantasy</button>
+            <button class="filter-chip" data-filter="Horror">Horror</button>
+            <button class="filter-chip" data-filter="Romance">Romance</button>
+            <button class="filter-chip" data-filter="Sci-Fi">Sci-Fi</button>
+            <button class="filter-chip" data-filter="Slice of Life">Slice of Life</button>
+            <button class="filter-chip" data-filter="Sports">Sports</button>
+            <button class="filter-chip" data-filter="Supernatural">Supernatural</button>
+            <button class="filter-chip" data-filter="Thriller">Thriller</button>
+          </div>
         </div>
+
+        <div id="catalog-content">
+          <div class="loading-state">
+            <div class="spinner-ring"></div>
+            <span>Loading catalog...</span>
+          </div>
+        </div>
+
       </div>
     </section>
 
-    <!-- SCREEN 2: BROWSE / CATALOG -->
-    <section id="screen-catalog" class="screen">
+    <!-- SCREEN 2: MY LIBRARY (WATCHLIST, WATCHED, FAVORITES & FRANCHISE GROUPING) -->
+    <section id="screen-library" class="screen">
       <header class="app-header">
         <div class="brand">
-          <span class="brand-title">Catalog</span>
+          <span class="brand-title">My Library</span>
         </div>
       </header>
 
-      <div class="filter-strip">
-        <button class="filter-chip active" data-filter="trending">Trending</button>
-        <button class="filter-chip" data-filter="new">New Releases</button>
-        <button class="filter-chip" data-filter="popular">All-Time Popular</button>
+      <div class="library-tabs">
+        <button class="lib-tab active" data-tab="watchlist">Watchlist</button>
+        <button class="lib-tab" data-tab="watched">Watched</button>
+        <button class="lib-tab" data-tab="favorites">Favorites</button>
+        <button class="lib-tab" data-tab="franchises">Franchises</button>
       </div>
 
-      <div id="catalog-content">
+      <div id="library-content" class="library-container">
         <div class="loading-state">
           <div class="spinner-ring"></div>
-          <span>Loading catalog...</span>
+          <span>Loading your library...</span>
         </div>
       </div>
     </section>
@@ -99,9 +127,9 @@
       <span class="nav-sym">●</span>
       <span class="nav-text">Discover</span>
     </button>
-    <button class="nav-item" data-screen="catalog">
-      <span class="nav-sym">≡</span>
-      <span class="nav-text">Catalog</span>
+    <button class="nav-item" data-screen="library">
+      <span class="nav-sym">▤</span>
+      <span class="nav-text">Library</span>
     </button>
   </nav>
 
@@ -111,3 +139,4 @@
   <script src="app.js"></script>
 </body>
 </html>
+

@@ -1,7 +1,8 @@
 /**
  * Anime Info — Mini App
- * Optimized for fast initial load, cached state transitions,
- * non-blocking loading indicators, and clean typography.
+ * Premium UI with integrated catalog, genre filtering,
+ * Library tab (Watchlist, Watched, Favorites, Franchises),
+ * multi-episode +/- progress controls, and smooth state updates.
  */
 
 const tg = window.Telegram?.WebApp;
@@ -22,11 +23,15 @@ const state = {
   currentScreen: "home",
   previousScreen: "home",
   activeFilter: "trending",
+  activeGenre: "All",
+  activeLibTab: "watchlist",
   discoverCache: null,
   catalogCache: {},
+  libraryData: null,
   searchCache: {},
   detailCache: {},
   watchlistSet: new Set(),
+  watchedSet: new Set(),
   favoritesSet: new Set(),
   searchTimer: null
 };
@@ -50,7 +55,7 @@ const loader = {
 };
 
 let toastTimeout = null;
-function notify(text, duration = 2000) {
+function notify(text, duration = 2200) {
   const el = document.getElementById("toast");
   if (!el) return;
   el.textContent = text;
@@ -110,9 +115,9 @@ function navigateTo(screenName, saveHistory = true) {
 document.querySelectorAll(".nav-item").forEach(btn => {
   btn.addEventListener("click", () => {
     const screen = btn.dataset.screen;
-    if (screen === "catalog") {
-      navigateTo("catalog");
-      loadCatalog(state.activeFilter);
+    if (screen === "library") {
+      navigateTo("library");
+      loadLibrary();
     } else {
       navigateTo("home");
     }
@@ -123,8 +128,8 @@ document.getElementById("back-btn")?.addEventListener("click", () => {
   navigateTo(state.previousScreen || "home", false);
 });
 
-// ── CARD COMPONENT ──
-function createCard(item, isGrid = false) {
+// ── CARD COMPONENT FOR DISCOVER & CATALOG ──
+function createCard(item) {
   const id = item.id || item.anime_id;
   const title = cleanTitle(item);
   const cover = getCover(item);
@@ -144,42 +149,27 @@ function createCard(item, isGrid = false) {
   return card;
 }
 
-// ── DISCOVER SCREEN ──
+// ── DISCOVER & INTEGRATED CATALOG SCREEN ──
 async function loadDiscover(forceRefresh = false) {
-  // Check local cache first for instant render
-  if (!forceRefresh && state.discoverCache) {
-    renderDiscover(state.discoverCache);
-    return;
-  }
-
-  // Check sessionStorage for fast start
-  try {
-    const cached = sessionStorage.getItem("cache_discover");
-    if (!forceRefresh && cached) {
-      state.discoverCache = JSON.parse(cached);
-      renderDiscover(state.discoverCache);
-    }
-  } catch (e) {}
-
   try {
     const data = await request("/api/discover");
     state.discoverCache = data;
-    try { sessionStorage.setItem("cache_discover", JSON.stringify(data)); } catch (e) {}
 
-    // Hydrate user watchlist set
-    if (data.watchlist) {
-      state.watchlistSet = new Set(data.watchlist.map(w => w.anime_id));
-    }
+    // Hydrate user sets
+    if (data.watchlist) state.watchlistSet = new Set(data.watchlist.map(w => w.anime_id));
+    if (data.watched) state.watchedSet = new Set(data.watched.map(w => w.anime_id));
+    if (data.favorites) state.favoritesSet = new Set(data.favorites.map(f => f.anime_id));
 
-    renderDiscover(data);
+    renderDiscoverHeader(data);
   } catch (err) {
-    if (!state.discoverCache) {
-      document.getElementById("carousel").innerHTML = `<p class="status-msg">Unable to load titles right now.</p>`;
-    }
+    console.warn("Discover fetch error:", err);
   }
+
+  // Load integrated catalog (default filter: 'all')
+  loadCatalog(state.activeFilter);
 }
 
-function renderDiscover(data) {
+function renderDiscoverHeader(data) {
   const user = data.user;
   const greetEl = document.getElementById("user-greeting");
   if (greetEl && user?.first_name) {
@@ -195,21 +185,72 @@ function renderDiscover(data) {
       carousel.innerHTML = `<p class="status-msg">No trending titles available.</p>`;
     }
   }
+}
 
-  // Render watchlist preview
-  const wlEl = document.getElementById("watchlist-home");
-  const countEl = document.getElementById("watchlist-count");
-  if (wlEl) {
-    const list = data.watchlist || [];
-    if (countEl) countEl.textContent = list.length ? `${list.length} saved` : "";
-    wlEl.innerHTML = "";
-    if (list.length) {
-      list.forEach(item => wlEl.appendChild(createCard(item, true)));
-    } else {
-      wlEl.innerHTML = `<p class="status-msg">Your watchlist is empty.</p>`;
-    }
+// Filter chips listener (All / Trending / New Releases / Popular / Genres...)
+document.querySelectorAll(".filter-chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll(".filter-chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    state.activeFilter = chip.dataset.filter;
+    loadCatalog(state.activeFilter);
+  });
+});
+
+async function loadCatalog(filter = "all") {
+  const container = document.getElementById("catalog-content");
+
+  if (state.catalogCache[filter]) {
+    renderCatalog(state.catalogCache[filter]);
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="loading-state">
+      <div class="spinner-ring"></div>
+      <span>Loading catalog titles...</span>
+    </div>
+  `;
+
+  try {
+    const data = await request(`/api/catalog?filter=${encodeURIComponent(filter)}`);
+    const catalog = data.catalog || {};
+    state.catalogCache[filter] = catalog;
+    renderCatalog(catalog);
+  } catch (err) {
+    container.innerHTML = `<p class="status-msg" style="padding:16px">Failed to load catalog.</p>`;
   }
 }
+
+function renderCatalog(grouped) {
+  const container = document.getElementById("catalog-content");
+  container.innerHTML = "";
+
+  // Sort letters so '#' comes first, followed by A-Z
+  const letters = Object.keys(grouped).sort((a, b) => {
+    if (a === "#") return -1;
+    if (b === "#") return 1;
+    return a.localeCompare(b);
+  });
+
+  if (!letters.length) {
+    container.innerHTML = `<p class="status-msg" style="padding:16px">No titles available in this category.</p>`;
+    return;
+  }
+
+  letters.forEach(letter => {
+    const header = document.createElement("div");
+    header.className = "letter-divider";
+    header.textContent = `— ${letter}`;
+    container.appendChild(header);
+
+    const grid = document.createElement("div");
+    grid.className = "grid-layout";
+    grouped[letter].forEach(item => grid.appendChild(createCard(item)));
+    container.appendChild(grid);
+  });
+}
+
 
 // ── SEARCH CONTROLLER ──
 const searchInput = document.getElementById("search-input");
@@ -253,7 +294,7 @@ async function executeSearch(query) {
     return;
   }
 
-  searchResults.innerHTML = `<div class="loading-state" style="grid-column:1/-1"><div class="spinner-ring"></div><span>Searching...</span></div>`;
+  searchResults.innerHTML = `<div class="loading-state" style="grid-column:1/-1"><div class="spinner-ring"></div><span>Searching titles...</span></div>`;
 
   try {
     const data = await request(`/api/search?q=${encodeURIComponent(query)}`);
@@ -269,69 +310,226 @@ function renderSearchResults(results) {
   if (searchCount) searchCount.textContent = `${results.length} found`;
   searchResults.innerHTML = "";
   if (results.length) {
-    results.forEach(item => searchResults.appendChild(createCard(item, true)));
+    results.forEach(item => searchResults.appendChild(createCard(item)));
   } else {
     searchResults.innerHTML = `<p class="status-msg">No results matching that title.</p>`;
   }
 }
 
-// ── CATALOG SCREEN ──
-document.querySelectorAll(".filter-chip").forEach(chip => {
-  chip.addEventListener("click", () => {
-    document.querySelectorAll(".filter-chip").forEach(c => c.classList.remove("active"));
-    chip.classList.add("active");
-    state.activeFilter = chip.dataset.filter;
-    loadCatalog(state.activeFilter);
+// ── LIBRARY CONTROLLER (WATCHLIST, WATCHED, FAVORITES, FRANCHISES) ──
+document.querySelectorAll(".lib-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".lib-tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    state.activeLibTab = tab.dataset.tab;
+    renderLibraryView();
   });
 });
 
-async function loadCatalog(filter = "trending") {
-  const container = document.getElementById("catalog-content");
-
-  // Instant render from cache if available
-  if (state.catalogCache[filter]) {
-    renderCatalog(state.catalogCache[filter]);
-    return;
-  }
-
+async function loadLibrary() {
+  const container = document.getElementById("library-content");
   container.innerHTML = `
     <div class="loading-state">
       <div class="spinner-ring"></div>
-      <span>Loading catalog...</span>
+      <span>Loading your library...</span>
     </div>
   `;
 
   try {
-    const data = await request(`/api/catalog?filter=${filter}`);
-    const catalog = data.catalog || {};
-    state.catalogCache[filter] = catalog;
-    renderCatalog(catalog);
+    const data = await request("/api/library");
+    state.libraryData = data;
+    
+    // Sync sets
+    state.watchlistSet = new Set((data.watchlist || []).map(w => w.anime_id));
+    state.watchedSet = new Set((data.watched || []).map(w => w.anime_id));
+    state.favoritesSet = new Set(data.fav_ids || []);
+
+    renderLibraryView();
   } catch (err) {
-    container.innerHTML = `<p class="status-msg" style="padding:16px">Failed to load catalog.</p>`;
+    container.innerHTML = `<p class="status-msg" style="padding:20px">Failed to load library data.</p>`;
   }
 }
 
-function renderCatalog(grouped) {
-  const container = document.getElementById("catalog-content");
+function renderLibraryView() {
+  const container = document.getElementById("library-content");
+  if (!container || !state.libraryData) return;
   container.innerHTML = "";
 
-  const letters = Object.keys(grouped).sort();
-  if (!letters.length) {
-    container.innerHTML = `<p class="status-msg" style="padding:16px">No titles available in this category.</p>`;
+  const tab = state.activeLibTab;
+
+  if (tab === "watchlist") {
+    renderLibraryItemsList(container, state.libraryData.watchlist || [], "Your Watchlist is empty. Add titles while browsing!");
+  } else if (tab === "watched") {
+    renderLibraryItemsList(container, state.libraryData.watched || [], "No completed or watched series yet.");
+  } else if (tab === "favorites") {
+    renderLibraryItemsList(container, state.libraryData.favorites || [], "No favorites added yet.");
+  } else if (tab === "franchises") {
+    renderFranchisesList(container, state.libraryData.franchises || {});
+  }
+}
+
+function renderLibraryItemsList(container, items, emptyMsg) {
+  if (!items || !items.length) {
+    container.innerHTML = `<p class="status-msg" style="padding:24px">${emptyMsg}</p>`;
     return;
   }
 
-  letters.forEach(letter => {
-    const header = document.createElement("div");
-    header.className = "letter-divider";
-    header.textContent = `— ${letter}`;
-    container.appendChild(header);
+  const list = document.createElement("div");
+  list.className = "library-list";
 
-    const grid = document.createElement("div");
-    grid.className = "grid-layout";
-    grouped[letter].forEach(item => grid.appendChild(createCard(item, true)));
-    container.appendChild(grid);
+  items.forEach(item => {
+    list.appendChild(createLibraryCard(item));
   });
+
+  container.appendChild(list);
+}
+
+function createLibraryCard(item) {
+  const id = item.anime_id || item.id;
+  const title = cleanTitle(item);
+  const cover = getCover(item);
+  const progress = item.progress || 0;
+  const total = item.total_episodes ? item.total_episodes : "?";
+  const isWatched = item.status === "completed" || state.watchedSet.has(id);
+  const isFav = state.favoritesSet.has(id);
+
+  const card = document.createElement("div");
+  card.className = "lib-card";
+  card.innerHTML = `
+    <div class="lib-card-left" onclick="openDetail(${id})">
+      ${cover ? `<img src="${cover}" alt="${title}">` : `<div style="width:60px;height:84px;background:#1a1c24;border-radius:8px"></div>`}
+    </div>
+    <div class="lib-card-main">
+      <div class="lib-card-title" onclick="openDetail(${id})">${title}</div>
+      <div class="lib-card-status">
+        <span class="badge ${isWatched ? "badge-watched" : "badge-watching"}">
+          ${isWatched ? "✓ Watched" : `Ep ${progress} / ${total}`}
+        </span>
+      </div>
+
+      <!-- Multi-episode progress increment / decrement buttons -->
+      <div class="multi-ep-controls">
+        <span class="ep-ctrl-label">Progress:</span>
+        <button class="ep-btn dec" data-delta="-10">-10</button>
+        <button class="ep-btn dec" data-delta="-3">-3</button>
+        <button class="ep-btn dec" data-delta="-1">-1</button>
+        <button class="ep-btn inc" data-delta="1">+1</button>
+        <button class="ep-btn inc" data-delta="3">+3</button>
+        <button class="ep-btn inc" data-delta="10">+10</button>
+      </div>
+
+      <div class="lib-card-actions">
+        <button class="lib-act-btn ${isWatched ? "active" : ""}" id="btn-mark-watched-${id}">
+          ${isWatched ? "✓ Completed" : "Mark Watched"}
+        </button>
+        <button class="lib-act-btn ${isFav ? "is-fav" : ""}" id="btn-fav-${id}">
+          ${isFav ? "★ Favorited" : "☆ Favorite"}
+        </button>
+        <button class="lib-act-btn remove" id="btn-remove-${id}">
+          Remove
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Multi-ep progress button handlers
+  card.querySelectorAll(".ep-btn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const delta = intVal(btn.dataset.delta);
+      try {
+        const res = await request(`/api/watchlist/${id}/progress?delta=${delta}`, { method: "PATCH" });
+        notify(`Progress: Ep ${res.progress}${res.status === "completed" ? " (Completed!)" : ""}`);
+        loadLibrary();
+      } catch (err) {
+        notify("Could not update progress.");
+      }
+    });
+  });
+
+  // Mark Watched toggle
+  card.querySelector(`#btn-mark-watched-${id}`).addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const newStatus = isWatched ? "watching" : "completed";
+    await request("/api/watchlist", {
+      method: "POST",
+      body: JSON.stringify({
+        anime_id: id,
+        title: title,
+        poster_image: cover,
+        total_episodes: item.total_episodes || 0,
+        status: newStatus
+      })
+    });
+    notify(newStatus === "completed" ? "Marked as Watched! 🎉" : "Moved to Watchlist.");
+    loadLibrary();
+  });
+
+  // Favorite toggle
+  card.querySelector(`#btn-fav-${id}`).addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await toggleFavAction(id, title, cover);
+    loadLibrary();
+  });
+
+  // Remove button
+  card.querySelector(`#btn-remove-${id}`).addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await request(`/api/watchlist/${id}`, { method: "DELETE" });
+    notify("Removed from library.");
+    loadLibrary();
+  });
+
+  return card;
+}
+
+function renderFranchisesList(container, franchises) {
+  const fNames = Object.keys(franchises).sort();
+  if (!fNames.length) {
+    container.innerHTML = `<p class="status-msg" style="padding:24px">No franchise groups saved in your library.</p>`;
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "franchise-list";
+
+  fNames.forEach(fName => {
+    const items = franchises[fName];
+    const groupCard = document.createElement("div");
+    groupCard.className = "franchise-group-card";
+
+    groupCard.innerHTML = `
+      <div class="franchise-header">
+        <div class="franchise-info">
+          <span class="franchise-title">${fName}</span>
+          <span class="franchise-count">${items.length} ${items.length === 1 ? 'Title' : 'Titles'}</span>
+        </div>
+        <span class="franchise-arrow">▼</span>
+      </div>
+      <div class="franchise-body hidden"></div>
+    `;
+
+    const header = groupCard.querySelector(".franchise-header");
+    const body = groupCard.querySelector(".franchise-body");
+    const arrow = groupCard.querySelector(".franchise-arrow");
+
+    header.addEventListener("click", () => {
+      const isHidden = body.classList.toggle("hidden");
+      arrow.textContent = isHidden ? "▼" : "▲";
+    });
+
+    items.forEach(item => {
+      body.appendChild(createLibraryCard(item));
+    });
+
+    list.appendChild(groupCard);
+  });
+
+  container.appendChild(list);
+}
+
+function intVal(str) {
+  return parseInt(str, 10) || 0;
 }
 
 // ── DETAIL SCREEN ──
@@ -339,7 +537,6 @@ async function openDetail(animeId, preliminaryData = null) {
   navigateTo("detail");
   const container = document.getElementById("detail-content");
 
-  // Immediate layout render using available metadata
   if (preliminaryData) {
     renderDetailView(preliminaryData, false);
   } else {
@@ -351,7 +548,6 @@ async function openDetail(animeId, preliminaryData = null) {
     `;
   }
 
-  // Hydrate full data from API or memory
   if (state.detailCache[animeId]) {
     renderDetailView(state.detailCache[animeId], true);
     return;
@@ -381,6 +577,7 @@ function renderDetailView(item, isHydrated = true) {
   const description = stripTags(item.description || "No synopsis available.");
   
   const inWatchlist = item.in_watchlist !== undefined ? item.in_watchlist : state.watchlistSet.has(id);
+  const isWatched = item.is_watched !== undefined ? item.is_watched : state.watchedSet.has(id);
   const isFavorite = item.is_favorite !== undefined ? item.is_favorite : state.favoritesSet.has(id);
   const progress = item.progress || 0;
 
@@ -402,6 +599,7 @@ function renderDetailView(item, isHydrated = true) {
         <div class="detail-stat">Score: <span>★ ${score}</span></div>
         <div class="detail-stat">Status: <span>${status}</span></div>
         <div class="detail-stat">Length: <span>${eps}</span></div>
+        <div class="detail-stat">Progress: <span>Ep ${progress}</span></div>
       </div>
     </div>
 
@@ -410,19 +608,27 @@ function renderDetailView(item, isHydrated = true) {
     <p class="detail-summary collapsed" id="summary-text">${description}</p>
     <button class="expand-toggle" id="summary-toggle">Show more ›</button>
 
-    <div class="action-grid">
+    <!-- Episode Progress Multi-Buttons -->
+    <div class="detail-section-label">Update Episode Progress:</div>
+    <div class="detail-ep-grid">
+      <button class="ep-btn dec" data-delta="-10">-10</button>
+      <button class="ep-btn dec" data-delta="-3">-3</button>
+      <button class="ep-btn dec" data-delta="-1">-1</button>
+      <button class="ep-btn inc" data-delta="1">+1</button>
+      <button class="ep-btn inc" data-delta="3">+3</button>
+      <button class="ep-btn inc" data-delta="10">+10</button>
+    </div>
+
+    <div class="action-grid" style="margin-top:16px;">
       <button class="btn-primary ${inWatchlist ? "in-list" : ""}" id="btn-watchlist-toggle">
         ${inWatchlist ? "✓ In Watchlist" : "+ Add to Watchlist"}
+      </button>
+      <button class="btn-secondary ${isWatched ? "is-fav" : ""}" id="btn-watched-toggle">
+        ${isWatched ? "✓ Marked Watched" : "✓ Mark as Watched"}
       </button>
       <button class="btn-secondary ${isFavorite ? "is-fav" : ""}" id="btn-fav-toggle">
         ${isFavorite ? "★ Favorited" : "☆ Favorite"}
       </button>
-
-      ${inWatchlist ? `
-        <button class="btn-accent" id="btn-inc-progress">
-          +1 Episode Progress (Ep ${progress})
-        </button>
-      ` : ""}
 
       ${item.siteUrl ? `
         <a class="btn-link" href="${item.siteUrl}" target="_blank">
@@ -442,38 +648,71 @@ function renderDetailView(item, isHydrated = true) {
     });
   }
 
+  // Multi-ep progress handlers on detail page
+  container.querySelectorAll(".detail-ep-grid .ep-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const delta = intVal(btn.dataset.delta);
+      try {
+        // Ensure added to watchlist if updating progress
+        if (!inWatchlist && !isWatched) {
+          await request("/api/watchlist", {
+            method: "POST",
+            body: JSON.stringify({
+              anime_id: id, title: title, poster_image: cover, total_episodes: item.episodes || 0, status: "watching"
+            })
+          });
+        }
+        const res = await request(`/api/watchlist/${id}/progress?delta=${delta}`, { method: "PATCH" });
+        notify(`Progress updated: Episode ${res.progress}${res.status === "completed" ? " (Completed!)" : ""}`);
+        state.detailCache[id] = null;
+        openDetail(id);
+      } catch (err) {
+        notify("Could not update progress.");
+      }
+    });
+  });
+
   // Watchlist action handler
   const wlBtn = document.getElementById("btn-watchlist-toggle");
   if (wlBtn) {
     wlBtn.addEventListener("click", async () => {
       const currentlyIn = wlBtn.classList.contains("in-list");
       if (currentlyIn) {
-        // Optimistic UI
         wlBtn.classList.remove("in-list");
         wlBtn.textContent = "+ Add to Watchlist";
         state.watchlistSet.delete(id);
         notify("Removed from watchlist.");
-        document.getElementById("btn-inc-progress")?.remove();
-        
         await request(`/api/watchlist/${id}`, { method: "DELETE" }).catch(() => {});
       } else {
         wlBtn.classList.add("in-list");
         wlBtn.textContent = "✓ In Watchlist";
         state.watchlistSet.add(id);
         notify("Added to watchlist.");
-
         await request("/api/watchlist", {
           method: "POST",
           body: JSON.stringify({
-            anime_id: id,
-            title: title,
-            poster_image: cover,
-            total_episodes: item.episodes || 0
+            anime_id: id, title: title, poster_image: cover, total_episodes: item.episodes || 0, status: "watching"
           })
         }).catch(() => {});
       }
-      // Invalidate discover cache to refresh next visit
-      state.discoverCache = null;
+    });
+  }
+
+  // Watched toggle action handler
+  const wtBtn = document.getElementById("btn-watched-toggle");
+  if (wtBtn) {
+    wtBtn.addEventListener("click", async () => {
+      const currentlyWatched = wtBtn.classList.contains("is-fav");
+      const newStatus = currentlyWatched ? "watching" : "completed";
+      await request("/api/watchlist", {
+        method: "POST",
+        body: JSON.stringify({
+          anime_id: id, title: title, poster_image: cover, total_episodes: item.episodes || 0, status: newStatus
+        })
+      });
+      notify(newStatus === "completed" ? "Marked as Watched! 🎉" : "Moved to Watchlist.");
+      state.detailCache[id] = null;
+      openDetail(id);
     });
   }
 
@@ -481,22 +720,6 @@ function renderDetailView(item, isHydrated = true) {
   const favBtn = document.getElementById("btn-fav-toggle");
   if (favBtn) {
     favBtn.addEventListener("click", () => toggleFavAction(id, title, cover));
-  }
-
-  // Increment episode progress
-  const progBtn = document.getElementById("btn-inc-progress");
-  if (progBtn) {
-    progBtn.addEventListener("click", async () => {
-      try {
-        const res = await request(`/api/watchlist/${id}/progress`, { method: "PATCH" });
-        const newProgress = res.progress ?? (progress + 1);
-        progBtn.textContent = `+1 Episode Progress (Ep ${newProgress})`;
-        notify(`Progress updated: Episode ${newProgress}`);
-        state.discoverCache = null;
-      } catch (e) {
-        notify("Failed to update progress.");
-      }
-    });
   }
 }
 
@@ -536,3 +759,4 @@ async function toggleFavAction(id, title, cover) {
 document.addEventListener("DOMContentLoaded", () => {
   loadDiscover();
 });
+
