@@ -123,13 +123,29 @@ ANIME_BY_ID_QUERY = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
     id
-    format startDate { year }
+    format startDate { year month day }
     title { romaji english native }
     status averageScore episodes
     description(asHtml: false)
     coverImage { large extraLarge }
     bannerImage siteUrl genres
     nextAiringEpisode { airingAt episode }
+    relations {
+      edges {
+        relationType
+        node {
+          id
+          type
+          format
+          startDate { year month day }
+          title { romaji english native }
+          coverImage { large extraLarge }
+          status
+          averageScore
+          episodes
+        }
+      }
+    }
   }
 }
 """
@@ -186,7 +202,7 @@ class AniListFetcher:
         return res.get("data", {}).get("Page", {})
 
     @classmethod
-    async def _browse_anime(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, sort: List[str] = None, genre: Optional[str] = None) -> Dict[str, Any]:
+    async def _browse_anime(cls, page: int = 1, per_page: int = 24, is_adult: bool = False, sort: List[str] = None, genre: Optional[str] = None) -> Dict[str, Any]:
         """Browse anime without keyword, sorted by given criteria and optional genre."""
         if sort is None:
             sort = ["POPULARITY_DESC"]
@@ -218,7 +234,7 @@ class AniListFetcher:
         return res.get("data", {}).get("Page", {})
 
     @classmethod
-    async def get_trending(cls, page: int = 1, per_page: int = 10, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_trending(cls, page: int = 1, per_page: int = 12, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
         variables: Dict[str, Any] = {"page": page, "perPage": per_page, "isAdult": is_adult}
         if genre and genre.strip():
             variables["genre"] = genre.strip()
@@ -226,12 +242,12 @@ class AniListFetcher:
         return res.get("data", {}).get("Page", {}).get("media", [])
 
     @classmethod
-    async def get_popular(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_popular(cls, page: int = 1, per_page: int = 24, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
         page_data = await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["POPULARITY_DESC"], genre=genre)
         return page_data.get("media", [])
 
     @classmethod
-    async def get_new_releases(cls, page: int = 1, per_page: int = 30, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_new_releases(cls, page: int = 1, per_page: int = 24, is_adult: bool = False, genre: Optional[str] = None) -> List[Dict[str, Any]]:
         page_data = await cls._browse_anime(page=page, per_page=per_page, is_adult=is_adult, sort=["START_DATE_DESC"], genre=genre)
         return page_data.get("media", [])
 
@@ -243,5 +259,59 @@ class AniListFetcher:
     @classmethod
     async def get_by_id(cls, anime_id: int) -> Dict[str, Any]:
         res = await _post(ANIME_BY_ID_QUERY, {"id": anime_id})
-        return res.get("data", {}).get("Media", {})
+        media = res.get("data", {}).get("Media", {})
+        if not media:
+            return {}
+
+        # Build chronological relations list
+        relations_raw = media.get("relations", {}).get("edges", [])
+        related_list = []
+
+        main_year = media.get("startDate", {}).get("year") or 9999
+        main_month = media.get("startDate", {}).get("month") or 12
+        main_day = media.get("startDate", {}).get("day") or 31
+
+        for edge in relations_raw:
+            node = edge.get("node")
+            if not node or node.get("type") != "ANIME":
+                continue
+            r_type = edge.get("relationType", "").replace("_", " ").title()
+            y = node.get("startDate", {}).get("year") or 9999
+            m = node.get("startDate", {}).get("month") or 12
+            d = node.get("startDate", {}).get("day") or 31
+            related_list.append({
+                "id": node.get("id"),
+                "title": node.get("title", {}).get("english") or node.get("title", {}).get("romaji") or "Unknown",
+                "relation_type": r_type,
+                "format": node.get("format") or "",
+                "year": y if y != 9999 else None,
+                "month": m,
+                "day": d,
+                "coverImage": node.get("coverImage", {}),
+                "status": node.get("status"),
+                "averageScore": node.get("averageScore"),
+                "episodes": node.get("episodes")
+            })
+
+        # Add current title to list for complete chronological ordering
+        related_list.append({
+            "id": media.get("id"),
+            "title": media.get("title", {}).get("english") or media.get("title", {}).get("romaji") or "Unknown",
+            "relation_type": "Selected Title",
+            "format": media.get("format") or "",
+            "year": main_year if main_year != 9999 else None,
+            "month": main_month,
+            "day": main_day,
+            "coverImage": media.get("coverImage", {}),
+            "status": media.get("status"),
+            "averageScore": media.get("averageScore"),
+            "episodes": media.get("episodes"),
+            "is_current": True
+        })
+
+        # Sort chronologically by release year, month, day
+        related_list.sort(key=lambda x: (x.get("year") or 9999, x.get("month") or 12, x.get("day") or 31))
+        media["relations_chronological"] = related_list
+        return media
+
 

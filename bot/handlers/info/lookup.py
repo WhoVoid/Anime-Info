@@ -43,16 +43,6 @@ def _build_search_results_markup(media_list: list, query: str, page: int, has_ne
 def _build_detail_card_markup(anime_id: int, query: str = "", page: int = 1) -> InlineKeyboardMarkup:
     buttons = [
         [
-            InlineKeyboardButton("+1 Ep", callback_data=f"tr_d:{anime_id}:1:{query[:20]}:{page}"),
-            InlineKeyboardButton("+3 Ep", callback_data=f"tr_d:{anime_id}:3:{query[:20]}:{page}"),
-            InlineKeyboardButton("+10 Ep", callback_data=f"tr_d:{anime_id}:10:{query[:20]}:{page}")
-        ],
-        [
-            InlineKeyboardButton("-1 Ep", callback_data=f"tr_d:{anime_id}:-1:{query[:20]}:{page}"),
-            InlineKeyboardButton("-3 Ep", callback_data=f"tr_d:{anime_id}:-3:{query[:20]}:{page}"),
-            InlineKeyboardButton("-10 Ep", callback_data=f"tr_d:{anime_id}:-10:{query[:20]}:{page}")
-        ],
-        [
             InlineKeyboardButton("[+] Watchlist", callback_data=f"wl_add:{anime_id}"),
             InlineKeyboardButton("★ Favorite", callback_data=f"fav_add:{anime_id}"),
             InlineKeyboardButton("✓ Watched", callback_data=f"wl_watched:{anime_id}")
@@ -62,6 +52,7 @@ def _build_detail_card_markup(anime_id: int, query: str = "", page: int = 1) -> 
         buttons.append([InlineKeyboardButton("‹ Back to Results", callback_data=f"anime_page:{query[:20]}:{page}")])
 
     return InlineKeyboardMarkup(buttons)
+
 
 def register_info_handlers(app: Client):
 

@@ -115,11 +115,11 @@ function navigateTo(screenName, saveHistory = true) {
 document.querySelectorAll(".nav-item").forEach(btn => {
   btn.addEventListener("click", () => {
     const screen = btn.dataset.screen;
+    navigateTo(screen);
     if (screen === "library") {
-      navigateTo("library");
       loadLibrary();
-    } else {
-      navigateTo("home");
+    } else if (screen === "home") {
+      loadDiscover();
     }
   });
 });
@@ -127,6 +127,7 @@ document.querySelectorAll(".nav-item").forEach(btn => {
 document.getElementById("back-btn")?.addEventListener("click", () => {
   navigateTo(state.previousScreen || "home", false);
 });
+
 
 // ── CARD COMPONENT FOR DISCOVER & CATALOG ──
 function createCard(item) {
@@ -589,6 +590,37 @@ function renderDetailView(item, isHydrated = true) {
     quickFav.onclick = () => toggleFavAction(id, title, cover);
   }
 
+  // Build Chronological Watch Order related titles HTML
+  let chronoHTML = "";
+  const chronoList = item.relations_chronological || [];
+  if (chronoList.length > 0) {
+    const cardsHTML = chronoList.map(rel => {
+      const rId = rel.id;
+      const rTitle = rel.title || "Unknown";
+      const rCover = rel.coverImage?.large || rel.coverImage?.extraLarge || "";
+      const rYear = rel.year ? rel.year : "TBA";
+      const rFmt = rel.format || "";
+      const rTag = rel.is_current ? "Selected" : (rel.relation_type || "Related");
+      const isCurr = rel.is_current ? "active-title" : "";
+
+      return `
+        <div class="chrono-card ${isCurr}" onclick="openDetail(${rId})">
+          ${rCover ? `<img src="${rCover}" alt="${rTitle}" loading="lazy">` : `<div style="height:110px;background:#15171e"></div>`}
+          <span class="chrono-tag ${rel.is_current ? "tag-curr" : ""}">${rTag}</span>
+          <div class="chrono-title">${rTitle}</div>
+          <div class="chrono-meta">${rYear} ${rFmt ? `· ${rFmt}` : ""}</div>
+        </div>
+      `;
+    }).join("");
+
+    chronoHTML = `
+      <div class="detail-section-label" style="margin-top:16px;">Chronological Watch Order & Related Series:</div>
+      <div class="horizontal-scroll chrono-scroll">
+        ${cardsHTML}
+      </div>
+    `;
+  }
+
   container.innerHTML = `
     ${banner ? `<img class="detail-banner-img" src="${banner}" alt="${title}" loading="lazy">` : ""}
 
@@ -608,6 +640,8 @@ function renderDetailView(item, isHydrated = true) {
     <p class="detail-summary collapsed" id="summary-text">${description}</p>
     <button class="expand-toggle" id="summary-toggle">Show more ›</button>
 
+    ${chronoHTML}
+
     <!-- Episode Progress Multi-Buttons -->
     <div class="detail-section-label">Update Episode Progress:</div>
     <div class="detail-ep-grid">
@@ -623,12 +657,13 @@ function renderDetailView(item, isHydrated = true) {
       <button class="btn-primary ${inWatchlist ? "in-list" : ""}" id="btn-watchlist-toggle">
         ${inWatchlist ? "✓ In Watchlist" : "+ Add to Watchlist"}
       </button>
-      <button class="btn-secondary ${isWatched ? "is-fav" : ""}" id="btn-watched-toggle">
+      <button class="btn-secondary ${isWatched ? "is-watched" : ""}" id="btn-watched-toggle">
         ${isWatched ? "✓ Marked Watched" : "✓ Mark as Watched"}
       </button>
       <button class="btn-secondary ${isFavorite ? "is-fav" : ""}" id="btn-fav-toggle">
         ${isFavorite ? "★ Favorited" : "☆ Favorite"}
       </button>
+
 
       ${item.siteUrl ? `
         <a class="btn-link" href="${item.siteUrl}" target="_blank">
@@ -637,6 +672,7 @@ function renderDetailView(item, isHydrated = true) {
       ` : ""}
     </div>
   `;
+
 
   // Synopsis expansion
   const toggleBtn = document.getElementById("summary-toggle");

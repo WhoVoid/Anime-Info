@@ -415,6 +415,12 @@ html, body {
   border-color: var(--gold);
   color: var(--gold);
 }
+.btn-secondary.is-watched {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(46, 184, 114, 0.12);
+}
+
 .btn-accent {
   grid-column: 1 / -1;
   background: rgba(46, 184, 114, 0.12);
@@ -777,7 +783,65 @@ html, body {
   background: var(--bg);
 }
 
-/* ── DETAIL EPISODE GRID ── */
+/* ── CHRONOLOGICAL WATCH ORDER CARDS ── */
+.chrono-scroll {
+  padding: 4px 16px 14px;
+}
+.chrono-card {
+  flex: 0 0 105px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.12s, border-color 0.15s;
+}
+.chrono-card:active {
+  transform: scale(0.96);
+}
+.chrono-card.active-title {
+  border-color: var(--accent-light);
+  box-shadow: 0 0 8px rgba(121, 134, 238, 0.25);
+}
+.chrono-card img {
+  width: 100%;
+  height: 125px;
+  object-fit: cover;
+  display: block;
+}
+.chrono-tag {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgba(13, 14, 18, 0.88);
+  color: var(--text-muted);
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.chrono-tag.tag-curr {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+.chrono-title {
+  padding: 4px 6px 1px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chrono-meta {
+  padding: 0 6px 6px;
+  font-size: 9.5px;
+  color: var(--text-muted);
+}
+
 .detail-section-label {
   font-size: 12px;
   font-weight: 600;
